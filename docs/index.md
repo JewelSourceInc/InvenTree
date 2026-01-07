@@ -1,5 +1,5 @@
 # 1
-'''
+```
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -18,14 +18,14 @@
     .category-info { font-size: 11px; color: #666; margin-top: 4px; }
   </style>
 </head>
-'''
+```
 papaparse = parser for CSV
 xlsx.full = parser for excel
 Style = basic styling commands
 Head start and end
 
 # 2
-'''
+```
 <body>
   <h1>InvenTree Parts Import (Username/Password)</h1>
 
@@ -60,7 +60,7 @@ Head start and end
     <p>Log:</p>
     <textarea id="log" readonly></textarea>
   </div>
-  '''
+  ```
 Input fiels are described here
 Server link: connects to our server only
 File upload: to upload files for future mapping
@@ -68,7 +68,7 @@ Preview: to display the final table after mapping is done
 Build Json and Send parts button: two step for safety and final confirmation
 
 #3
-  '''
+  ```
   <script>
     let rows = []; // parsed file rows as objects
 
@@ -79,7 +79,7 @@ Build Json and Send parts button: two step for safety and final confirmation
     const sendBtn      = document.getElementById('send-btn');
     const logArea      = document.getElementById('log');
     const baseUrlInput = document.getElementById('base-url');
-    '''
+    ```
 rows: global array that will hold the parsed data from the CSV/Excel file as an array of objects, one per row.
 fileInput, loadBtn, previewTable, buildJsonBtn, sendBtn, logArea, baseUrlInput: references to specific HTML elements (inputs, buttons, table, textarea) by their id, so the script can read/write them and attach events.
 
