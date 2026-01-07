@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>InvenTree Parts Import - Username/Password</title>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    label { display: block; margin: 8px 0 4px; }
+    input, button { margin-bottom: 8px; }
+    table, th, td { border: 1px solid #ccc; border-collapse: collapse; padding: 3px 6px; font-size: 12px; }
+    th { background: #f3f3f3; }
+    .section { margin-top: 20px; }
+    textarea { width: 100%; height: 80px; }
+    .category-info { font-size: 11px; color: #666; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>InvenTree Parts Import (Username/Password)</h1>
+
+  <!-- InvenTree Server -->
+  <div class="section">
+    <h2>InvenTree Server</h2>
+    <label>InvenTree Base URL (no trailing slash)</label>
+    <input id="base-url" type="text" placeholder="https://inventree.jsistock.com" size="40" value="https://inventree.jsistock.com" />
+  </div>
+
+  <!-- File upload -->
+  <div class="section">
+    <h2>Upload Excel / CSV</h2>
+    <input id="file-input" type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" />
+    <button id="load-btn">Load File</button>
+  </div>
+
+  <!-- Preview -->
+  <div class="section">
+    <h2>Preview (first 10 rows) - Mapped Fields</h2>
+    <div class="category-info">
+      Category mapping: 3rd char of Style → R=Ring(6), N=Necklace(7), E=Earring(4), P=Pendant(5), B=Bangle(8), S=Set(9)
+    </div>
+    <table id="preview-table"></table>
+  </div>
+
+  <!-- Actions -->
+  <div class="section">
+    <h2>Import Parts</h2>
+    <button id="build-json-btn">Build Parts JSON</button>
+    <button id="send-btn">Send Parts to InvenTree</button>
+    <p>Log:</p>
+    <textarea id="log" readonly></textarea>
+  </div>
+
+  <script>
+    let rows = []; // parsed file rows as objects
+
+    const fileInput    = document.getElementById('file-input');
+    const loadBtn      = document.getElementById('load-btn');
+    const previewTable = document.getElementById('preview-table');
+    const buildJsonBtn = document.getElementById('build-json-btn');
+    const sendBtn      = document.getElementById('send-btn');
+    const logArea      = document.getElementById('log');
+    const baseUrlInput = document.getElementById('base-url');
+
+    // Category mapping: 3rd character of Style → Category ID
+    const categoryMap = {
+      'R': 6,  // Ring
+      'N': 7,  // Necklace  
+      'E': 4,  // Earring
+      'P': 5,  // Pendant
+      'B': 8,  // Bangle or Bracelet
+      'S': 9   // Set
+    };
+
+    function log(msg) {
+      logArea.value += msg + "\n";
+      logArea.scrollTop = logArea.scrollHeight;
+    }
+
+    // Load & parse file
+    loadBtn.addEventListener('click', () => {
+      const file = fileInput.files[0];
+      if (!file) {
+        alert('Please select a file first.');
+        return;
+      }
+
+      const name = file.name.toLowerCase();
+      if (name.endsWith('.csv')) {
+        parseCsv(file);
+      } else if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+        parseXlsx(file);
+      } else {
+        alert('Unsupported file type: use CSV or Excel (.xlsx).');
+      }
+    });
+
+    function parseCsv(file) {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          rows = results.data;
+          log('Parsed CSV rows: ' + rows.length);
+          renderPreview();
+        },
+        error: (err) => {
+          console.error(err);
+          alert('Error parsing CSV: ' + err.message);
+        }
+      });
+    }
+
+    function parseXlsx(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, {type: 'array'});
+        const firstSheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[firstSheetName];
+        rows = XLSX.utils.sheet_to_json(sheet, {defval: ''});
+        log('Parsed Excel rows: ' + rows.length);
+        renderPreview();
+      };
+      reader.onerror = (err) => {
+        console.error(err);
+        alert('Error reading Excel: ' + err.message);
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    // Preview first 10 rows with mapped columns only
+    function renderPreview() {
+      previewTable.innerHTML = '';
+      if (!rows.length) return;
+
+      const headers = ['IPN (Style)', 'Name/Desc (Desc)', 'Category (auto)', 'Diam', 'Gms', 'CTW'];
+      const theadTr = document.createElement('tr');
+      headers.forEach(h => {
+        const th = document.createElement('th');
+        th.textContent = h;
+        theadTr.appendChild(th);
+      });
+      previewTable.appendChild(theadTr);
+
+      rows.slice(0, 10).forEach(r => {
+        const tr = document.createElement('tr');
+        
+        // IPN from Style column
+        const ipnCell = document.createElement('td');
+        ipnCell.textContent = r['Style'] || '';
+        tr.appendChild(ipnCell);
+
+        // Name/Description from Desc column  
+        const nameCell = document.createElement('td');
+        nameCell.textContent = r['Desc'] || '';
+        tr.appendChild(nameCell);
+
+        // Auto-calculated Category from 3rd char of Style (number only)
+        const style = (r['Style'] || '').toString();
+        const thirdChar = style.length >= 3 ? style[2].toUpperCase() : '';
+        const categoryId = categoryMap[thirdChar] || 0;
+        const catCell = document.createElement('td');
+        catCell.textContent = categoryId || 'NO MATCH';
+        catCell.style.color = categoryId ? 'green' : 'red';
+        tr.appendChild(catCell);
+
+        // Additional columns for reference
+        ['Diam', 'Gms', 'CTW'].forEach(col => {
+          const td = document.createElement('td');
+          td.textContent = r[col] || '';
+          tr.appendChild(td);
+        });
+
+        previewTable.appendChild(tr);
+      });
+    }
+
+    // Build Parts array from rows with new mapping
+    function buildParts() {
+      const parts = [];
+
+      rows.forEach(r => {
+        const style = (r['Style'] || '').toString();
+        if (!style) return; // Skip rows without Style
+
+        // Extract 3rd character for category
+        const thirdChar = style.length >= 3 ? style[2].toUpperCase() : '';
+        const categoryId = categoryMap[thirdChar];
+
+        const part = {
+          name: r['Desc'] || '',
+          IPN: style,
+          description: r['Desc'] || ''
+        };
+
+        // Only add category if valid mapping found
+        if (categoryId) {
+          part.category = Number(categoryId);
+        }
+
+        parts.push(part);
+      });
+
+      return parts;
+    }
+
+    buildJsonBtn.addEventListener('click', () => {
+      if (!rows.length) {
+        alert('Load a file first.');
+        return;
+      }
+      const parts = buildParts();
+      log('Built Parts JSON: ' + parts.length + ' entries');
+      console.log('Parts:', parts);
+      alert('Parts JSON built. Check console for details.');
+    });
+
+    // Send Parts to InvenTree - USERNAME/PASSWORD AUTH
+    sendBtn.addEventListener('click', async () => {
+      if (!rows.length) {
+        alert('Load a file first.');
+        return;
+      }
+
+      const baseUrl = baseUrlInput.value.trim();
+      const username = prompt('Enter your InvenTree username:');
+      const password = prompt('Enter your InvenTree password:');
+      
+      if (!baseUrl || !username || !password) {
+        alert('Fill all fields.');
+        return;
+      }
+
+      const parts = buildParts();
+      const partsUrl = baseUrl.replace(/\/+$/, '') + '/api/part/';
+
+      const auth = btoa(username + ':' + password);  // Basic auth
+
+      log('Sending ' + parts.length + ' parts...');
+      
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i];
+        try {
+          const res = await fetch(partsUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Basic ' + auth
+            },
+            body: JSON.stringify(p)
+          });
+
+          if (!res.ok) {
+            const text = await res.text();
+            log(`Part ${i+1} ❌ ${p.IPN}: ${res.status} - ${text.slice(0,50)}`);
+          } else {
+            const data = await res.json();
+            log(`Part ${i+1} ✅ ${p.IPN}: ID ${data.pk}`);
+          }
+        } catch (err) {
+          log(`Part ${i+1} ❌ ${p.IPN}: ${err.message}`);
+        }
+      }
+      log('Import complete.');
+    });
+  </script>
+</body>
+</html>
