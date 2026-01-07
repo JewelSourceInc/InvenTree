@@ -19,9 +19,9 @@
   </style>
 </head>
 ```
-papaparse = parser for CSV
-xlsx.full = parser for excel
-Style = basic styling commands
+- papaparse = parser for CSV
+- xlsx.full = parser for excel
+- Style = basic styling commands
 Head start and end
 
 # 2
@@ -61,11 +61,11 @@ Head start and end
     <textarea id="log" readonly></textarea>
   </div>
   ```
-Input fiels are described here
-Server link: connects to our server only
-File upload: to upload files for future mapping
-Preview: to display the final table after mapping is done
-Build Json and Send parts button: two step for safety and final confirmation
+Input fields are described here
+- Server link: connects to our server only
+- File upload: to upload files for future mapping
+- Preview: to display the final table after mapping is done
+- Build Json and Send parts button: two step for safety and final confirmation
 
 # 3
 ```
@@ -80,7 +80,7 @@ Build Json and Send parts button: two step for safety and final confirmation
     const logArea      = document.getElementById('log');
     const baseUrlInput = document.getElementById('base-url');
 ```
-rows: global array that will hold the parsed data from the CSV/Excel file as an array of objects, one per row.
+rows: global array that will hold the parsed data from the CSV/Excel file as an array of objects, one per row. 
 fileInput, loadBtn, previewTable, buildJsonBtn, sendBtn, logArea, baseUrlInput: references to specific HTML elements (inputs, buttons, table, textarea) by their id, so the script can read/write them and attach events.
 
 # 4
@@ -95,7 +95,7 @@ fileInput, loadBtn, previewTable, buildJsonBtn, sendBtn, logArea, baseUrlInput: 
       'S': 9   // Set
     };
 ```
-Finds category by using Styles 3rd character and what their values are
+Finds category by using Styles 3rd character and what their values are. 
 Example: if Style is "AABR100...", the 3rd character is "B", so categoryMap['B'] gives 8 (Bangle category ID).
 
 # 5
@@ -128,12 +128,12 @@ this creates the log window at the bottom of the page. Useful to see the status,
     });
 ```
 When the user clicks “Load File”:
-Gets the first selected file from the file input.
-If no file is selected: shows an alert.
-Checks the filename extension:
-- csv → use the CSV parser.
-- xlsx / .xls → use the Excel parser.
-Otherwise: alert unsupported type.
+- Gets the first selected file from the file input.
+- If no file is selected: shows an alert.
+- Checks the filename extension:
+    - csv → use the CSV parser.
+    - xlsx / .xls → use the Excel parser.
+- Otherwise: alert unsupported type.
 Useful as it routes to the appropriate parsing function depending on the file type.
 
 # 7
@@ -154,14 +154,14 @@ Useful as it routes to the appropriate parsing function depending on the file ty
       });
     }
 ```
-Parses CSV with papaverse
-header: true: treats the first row as header and returns an array of objects {ColumnName: value}.
-skipEmptyLines: true: ignores blank lines.
+Parses CSV with papaverse. 
+header: true: treats the first row as header and returns an array of objects {ColumnName: value}. 
+skipEmptyLines: true: ignores blank lines. 
 On success (complete):
 - Assigns rows = results.data (all row objects).
 - Logs how many rows were parsed.
 - Calls renderPreview() to show a preview table.
-On error: prints error to console and shows an alert.
+On error: prints error to console and shows an alert. 
 It converts the raw CSV file into a usable JavaScript data structure (array of row objects) and triggers preview.
 
 # 8
@@ -184,13 +184,13 @@ It converts the raw CSV file into a usable JavaScript data structure (array of r
       reader.readAsArrayBuffer(file);
     }
 ```
-Parses excel
-Uses FileReader to read the Excel file as an ArrayBuffer.
-Converts it to Uint8Array and feeds it into XLSX.read (from SheetJS).
-Picks the first sheet (SheetNames[0]).
-Converts the sheet to JSON row objects with sheet_to_json, using defval: '' to fill empty cells with empty strings.
-Stores into rows, logs count, calls renderPreview().
-It allows importing from Excel exports directly without manually converting to CSV.
+Parses excel. 
+Uses FileReader to read the Excel file as an ArrayBuffer. 
+Converts it to Uint8Array and feeds it into XLSX.read (from SheetJS). 
+Picks the first sheet (SheetNames[0]). 
+Converts the sheet to JSON row objects with sheet_to_json, using defval: '' to fill empty cells with empty strings. 
+Stores into rows, logs count, calls renderPreview(). 
+It allows importing from Excel exports directly without manually converting to CSV. 
 
 # 9
 ```
@@ -241,8 +241,8 @@ It allows importing from Excel exports directly without manually converting to C
       });
     }
 ```
-Clears any previous table content.
-If there are no rows, stops.
+Clears any previous table content. 
+If there are no rows, stops. 
 Defines the preview headers – these are mapped fields, not raw CSV headers:
 - IPN (Style): Style column used as IPN.
 - Name/Desc (Desc): Desc column.
@@ -258,7 +258,7 @@ For each of the first 10 rows:
         - Shows category ID or NO MATCH if mapping not found.
         - Colors category cell green if valid, red if no mapping.
     - Displays the values of Diam, Gms, CTW straight from the row.
-This gives the user a quick visual sanity‑check: Are we mapping the fields correctly and is the auto category logic doing what we expect?
+This gives the user a quick visual sanity‑check: Are we mapping the fields correctly and is the auto category logic doing what we expect? 
 
 # 10
 ```
@@ -291,7 +291,7 @@ This gives the user a quick visual sanity‑check: Are we mapping the fields cor
       return parts;
     }
 ```
-Creates an array parts that will hold InvenTree part objects.
+Creates an array parts that will hold InvenTree part objects. 
 Iterates through each row in rows:
     - Reads Style, ensures it’s a string.
     - Skips the row if Style is missing (cannot create part without IPN/identifier).
@@ -302,8 +302,8 @@ Iterates through each row in rows:
         - description: from Desc again (so name and description match).
     - If categoryId exists, sets part.category as a number.
     - Pushes this part into parts.
-Returns parts, which is now the ready‑to‑POST payload array.
-It converts the CSV concept of a row into an InvenTree API part object (this is the bridge between the file schema and the server’s JSON schema).
+Returns parts, which is now the ready‑to‑POST payload array. 
+It converts the CSV concept of a row into an InvenTree API part object (this is the bridge between the file schema and the server’s JSON schema). 
 
 # 11
 ```
