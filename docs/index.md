@@ -68,7 +68,7 @@ Preview: to display the final table after mapping is done
 Build Json and Send parts button: two step for safety and final confirmation
 
 # 3
-  ```
+```
   <script>
     let rows = []; // parsed file rows as objects
 
@@ -79,12 +79,12 @@ Build Json and Send parts button: two step for safety and final confirmation
     const sendBtn      = document.getElementById('send-btn');
     const logArea      = document.getElementById('log');
     const baseUrlInput = document.getElementById('base-url');
-    ```
+```
 rows: global array that will hold the parsed data from the CSV/Excel file as an array of objects, one per row.
 fileInput, loadBtn, previewTable, buildJsonBtn, sendBtn, logArea, baseUrlInput: references to specific HTML elements (inputs, buttons, table, textarea) by their id, so the script can read/write them and attach events.
 
 # 4
-    ```
+```
     // Category mapping: 3rd character of Style → Category ID
     const categoryMap = {
       'R': 6,  // Ring
@@ -94,21 +94,21 @@ fileInput, loadBtn, previewTable, buildJsonBtn, sendBtn, logArea, baseUrlInput: 
       'B': 8,  // Bangle or Bracelet
       'S': 9   // Set
     };
-    ```
+```
 Finds category by using Styles 3rd character and what their values are
 Example: if Style is "AABR100...", the 3rd character is "B", so categoryMap['B'] gives 8 (Bangle category ID).
 
 # 5
-    ```
+```
     function log(msg) {
       logArea.value += msg + "\n";
       logArea.scrollTop = logArea.scrollHeight;
     }
-    ```
+```
 this creates the log window at the bottom of the page. Useful to see the status, parsing results, errors etc.
 
 # 6
-    ```
+```
     // Load & parse file
     loadBtn.addEventListener('click', () => {
       const file = fileInput.files[0];
@@ -126,7 +126,7 @@ this creates the log window at the bottom of the page. Useful to see the status,
         alert('Unsupported file type: use CSV or Excel (.xlsx).');
       }
     });
-    ```
+```
 When the user clicks “Load File”:
 Gets the first selected file from the file input.
 If no file is selected: shows an alert.
@@ -137,7 +137,7 @@ Otherwise: alert unsupported type.
 Useful as it routes to the appropriate parsing function depending on the file type.
 
 # 7
-    ```
+```
     function parseCsv(file) {
       Papa.parse(file, {
         header: true,
@@ -153,7 +153,7 @@ Useful as it routes to the appropriate parsing function depending on the file ty
         }
       });
     }
-    ```
+```
 Parses CSV with papaverse
 header: true: treats the first row as header and returns an array of objects {ColumnName: value}.
 skipEmptyLines: true: ignores blank lines.
@@ -165,7 +165,7 @@ On error: prints error to console and shows an alert.
 It converts the raw CSV file into a usable JavaScript data structure (array of row objects) and triggers preview.
 
 # 8
-    ```
+```
     function parseXlsx(file) {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -183,7 +183,7 @@ It converts the raw CSV file into a usable JavaScript data structure (array of r
       };
       reader.readAsArrayBuffer(file);
     }
-    ```
+```
 Parses excel
 Uses FileReader to read the Excel file as an ArrayBuffer.
 Converts it to Uint8Array and feeds it into XLSX.read (from SheetJS).
@@ -193,7 +193,7 @@ Stores into rows, logs count, calls renderPreview().
 It allows importing from Excel exports directly without manually converting to CSV.
 
 # 9
-    ```
+```
     // Preview first 10 rows with mapped columns only
     function renderPreview() {
       previewTable.innerHTML = '';
@@ -240,7 +240,7 @@ It allows importing from Excel exports directly without manually converting to C
         previewTable.appendChild(tr);
       });
     }
-    ```
+```
 Clears any previous table content.
 If there are no rows, stops.
 Defines the preview headers – these are mapped fields, not raw CSV headers:
@@ -261,7 +261,7 @@ For each of the first 10 rows:
 This gives the user a quick visual sanity‑check: Are we mapping the fields correctly and is the auto category logic doing what we expect?
 
 # 10
-    ```
+```
     // Build Parts array from rows with new mapping
     function buildParts() {
       const parts = [];
@@ -290,7 +290,7 @@ This gives the user a quick visual sanity‑check: Are we mapping the fields cor
 
       return parts;
     }
-    ```
+```
 Creates an array parts that will hold InvenTree part objects.
 Iterates through each row in rows:
     - Reads Style, ensures it’s a string.
@@ -306,7 +306,7 @@ Returns parts, which is now the ready‑to‑POST payload array.
 It converts the CSV concept of a row into an InvenTree API part object (this is the bridge between the file schema and the server’s JSON schema).
 
 # 11
-    ```
+```
     buildJsonBtn.addEventListener('click', () => {
       if (!rows.length) {
         alert('Load a file first.');
@@ -317,7 +317,7 @@ It converts the CSV concept of a row into an InvenTree API part object (this is 
       console.log('Parts:', parts);
       alert('Parts JSON built. Check console for details.');
     });
-    ```
+```
 When the user clicks “Build Parts JSON”:
     - If no rows are loaded, shows an alert.
     - Calls buildParts() to create the part objects.
@@ -327,7 +327,7 @@ When the user clicks “Build Parts JSON”:
 A safe step to inspect data before actually sending it, useful for debugging and training others.
 
 # 12
-    ```
+```
     // Send Parts to InvenTree - USERNAME/PASSWORD AUTH
     sendBtn.addEventListener('click', async () => {
       if (!rows.length) {
@@ -376,7 +376,7 @@ A safe step to inspect data before actually sending it, useful for debugging and
       }
       log('Import complete.');
     });
-    ```
+```
 Step‑by‑step:
 1. Pre‑checks
 Ensures you have loaded some rows.
@@ -390,24 +390,24 @@ If any of base URL, username or password are missing, shows an alert and cancels
 Calls buildParts() again to get the latest parts array.
 Constructs the API endpoint:
 
-    ```
+```
     const partsUrl = baseUrl.replace(/\/+$/, '') + '/api/part/';
-    ```
+```
  
     - replace(/\/+$/, '') strips any trailing slashes from the base URL to avoid double slashes when concatenating.
 
 4. Basic Authentication string
 
-    ```
+```
     const auth = btoa(username + ':' + password);
-    ```
+```
 
 btoa converts the string "username:password" into Base64.
 The header Authorization: Basic <base64> is how HTTP Basic Auth works.
 
 5. Loop over parts and POST each one
 
-    ```
+```
     for (let i = 0; i < parts.length; i++) {
     const p = parts[i];
     const res = await fetch(partsUrl, {
@@ -420,7 +420,7 @@ The header Authorization: Basic <base64> is how HTTP Basic Auth works.
     });
     ...
     }
-    ```
+```
 
 Uses fetch with:
     - method: 'POST'
@@ -431,7 +431,7 @@ Waits for each request to complete (await) before moving to the next.
 
 6. Handling responses
 
-    ```
+```
     if (!res.ok) {
     const text = await res.text();
     log(`Part ${i+1} ❌ ${p.IPN}: ${res.status} - ${text.slice(0,50)}`);
@@ -439,7 +439,7 @@ Waits for each request to complete (await) before moving to the next.
     const data = await res.json();
     log(`Part ${i+1} ✅ ${p.IPN}: ID ${data.pk}`);
     }
-    ```
+```
 
 If HTTP response is not OK (status not 2xx):
     - Reads response text.
@@ -450,19 +450,19 @@ If OK:
 
 7. Error catching
 
-    ```
+```
     } catch (err) {
     log(`Part ${i+1} ❌ ${p.IPN}: ${err.message}`);
     }
-    ```
+```
 
 Catches network or runtime errors and logs them.
 
 8. Final log
 
-    ```
+```
     log('Import complete.');
-    ```
+```
 
 It implements the actual import. It is designed to be:
     - Explicit: one log line per part so you can see which ones failed.
