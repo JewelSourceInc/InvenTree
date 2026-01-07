@@ -67,7 +67,7 @@ File upload: to upload files for future mapping
 Preview: to display the final table after mapping is done
 Build Json and Send parts button: two step for safety and final confirmation
 
-#3
+# 3
   ```
   <script>
     let rows = []; // parsed file rows as objects
@@ -83,7 +83,7 @@ Build Json and Send parts button: two step for safety and final confirmation
 rows: global array that will hold the parsed data from the CSV/Excel file as an array of objects, one per row.
 fileInput, loadBtn, previewTable, buildJsonBtn, sendBtn, logArea, baseUrlInput: references to specific HTML elements (inputs, buttons, table, textarea) by their id, so the script can read/write them and attach events.
 
-#4
+# 4
     ```
     // Category mapping: 3rd character of Style → Category ID
     const categoryMap = {
@@ -98,7 +98,7 @@ fileInput, loadBtn, previewTable, buildJsonBtn, sendBtn, logArea, baseUrlInput: 
 Finds category by using Styles 3rd character and what their values are
 Example: if Style is "AABR100...", the 3rd character is "B", so categoryMap['B'] gives 8 (Bangle category ID).
 
-#5
+# 5
     ```
     function log(msg) {
       logArea.value += msg + "\n";
@@ -107,7 +107,7 @@ Example: if Style is "AABR100...", the 3rd character is "B", so categoryMap['B']
     ```
 this creates the log window at the bottom of the page. Useful to see the status, parsing results, errors etc.
 
-#6
+# 6
     ```
     // Load & parse file
     loadBtn.addEventListener('click', () => {
@@ -136,7 +136,7 @@ Checks the filename extension:
 Otherwise: alert unsupported type.
 Useful as it routes to the appropriate parsing function depending on the file type.
 
-#7
+# 7
     ```
     function parseCsv(file) {
       Papa.parse(file, {
@@ -164,7 +164,7 @@ On success (complete):
 On error: prints error to console and shows an alert.
 It converts the raw CSV file into a usable JavaScript data structure (array of row objects) and triggers preview.
 
-#8
+# 8
     ```
     function parseXlsx(file) {
       const reader = new FileReader();
@@ -192,7 +192,7 @@ Converts the sheet to JSON row objects with sheet_to_json, using defval: '' to f
 Stores into rows, logs count, calls renderPreview().
 It allows importing from Excel exports directly without manually converting to CSV.
 
-#9
+# 9
     ```
     // Preview first 10 rows with mapped columns only
     function renderPreview() {
@@ -260,7 +260,7 @@ For each of the first 10 rows:
     - Displays the values of Diam, Gms, CTW straight from the row.
 This gives the user a quick visual sanity‑check: Are we mapping the fields correctly and is the auto category logic doing what we expect?
 
-#10
+# 10
     ```
     // Build Parts array from rows with new mapping
     function buildParts() {
@@ -305,7 +305,7 @@ Iterates through each row in rows:
 Returns parts, which is now the ready‑to‑POST payload array.
 It converts the CSV concept of a row into an InvenTree API part object (this is the bridge between the file schema and the server’s JSON schema).
 
-#11
+# 11
     ```
     buildJsonBtn.addEventListener('click', () => {
       if (!rows.length) {
@@ -326,7 +326,7 @@ When the user clicks “Build Parts JSON”:
     - Alerts the user that JSON is ready.
 A safe step to inspect data before actually sending it, useful for debugging and training others.
 
-#12
+# 12
     ```
     // Send Parts to InvenTree - USERNAME/PASSWORD AUTH
     sendBtn.addEventListener('click', async () => {
@@ -469,7 +469,7 @@ It implements the actual import. It is designed to be:
     - Safe: stops only at user input errors or hard JavaScript errors; keeps going part‑by‑part otherwise.
     - Simple: uses Basic Auth so you can reuse your existing web credentials.
 
-#13
+# 13
 ```
 </script>
 </body>
