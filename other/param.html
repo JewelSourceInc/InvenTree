@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>InvenTree Part Parameter IDs</title>
+  <style>
+    #log {
+      margin-top: 1em;
+      padding: 0.5em;
+      border: 1px solid #ccc;
+      font-family: monospace;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h3>Get Part Parameter IDs</h3>
+
+  <label>
+    InvenTree base URL (no trailing slash):
+    <input id="baseUrl" type="text" size="40" value="http://localhost:8000">
+  </label>
+  <br><br>
+
+  <label>
+    Username:
+    <input id="username" type="text">
+  </label>
+  <br><br>
+
+  <label>
+    Password:
+    <input id="password" type="password">
+  </label>
+  <br><br>
+
+  <label>
+    Part ID:
+    <input id="partId" type="number">
+  </label>
+  <br><br>
+
+  <button id="fetchBtn">Fetch Parameter IDs</button>
+
+  <div id="log"></div>
+
+  <script>
+    document.getElementById('fetchBtn').addEventListener('click', fetchParameterIds);
+
+    function log(msg, obj) {
+      const logDiv = document.getElementById('log');
+      const text = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);
+      logDiv.textContent += text + '\n';
+      if (obj !== undefined) {
+        logDiv.textContent += JSON.stringify(obj, null, 2) + '\n';
+      }
+    }
+
+    async function fetchParameterIds() {
+      document.getElementById('log').textContent = '';
+
+      const baseUrl = document.getElementById('baseUrl').value.trim();
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      const partId = document.getElementById('partId').value.trim();
+
+      if (!baseUrl || !username || !password || !partId) {
+        log('Please fill in all fields.');
+        return;
+      }
+
+      const token = btoa(username + ':' + password);
+      const headers = {
+        'Authorization': 'Basic ' + token,
+        'Accept': 'application/json'
+      };
+
+      const url = baseUrl + '/api/part/parameter/?part=' + encodeURIComponent(partId);
+
+      log('Requesting: ' + url);
+
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: headers,
+          // If you serve this file from a different origin than InvenTree,
+          // the browser may block the request due to CORS. [web:16]
+          // mode: 'cors',
+          credentials: 'include'
+        });
+
+        log('HTTP status: ' + response.status + ' ' + response.statusText);
+
+        if (!response.ok) {
+          const text = await response.text();
+          log('Non-OK response body:');
+          log(text);
+          return;
+        }
+
+        const data = await response.json();
+
+        const results = Array.isArray(data) ? data : (data.results || []);
+        if (!results.length) {
+          log('No parameters found for part ' + partId);
+          return;
+        }
+
+        const ids = results.map(p => p.pk || p.id);
+        log('Parameter IDs for part ' + partId + ':');
+        log(ids);
+
+        // Optional: uncomment to see full objects
+        // log('Full parameter objects:');
+        // log(results);
+      } catch (err) {
+        log('Request failed:');
+        log(String(err));
+      }
+    }
+  </script>
+</body>
+</html>

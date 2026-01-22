@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InvenTree Parts + Parameters CSV Generator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 900px; margin: 50px auto; padding: 20px; }
+        .container { background: #f5f5f5; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        input[type="file"] { margin: 20px 0; padding: 10px; width: 100%; border: 1px solid #ddd; border-radius: 5px; }
+        button { background: #007cba; color: white; padding: 12px 30px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin: 5px; }
+        button:hover { background: #005a87; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #preview, #debug { margin-top: 20px; max-height: 300px; overflow: auto; background: white; padding: 15px; border-radius: 5px; font-family: monospace; font-size: 12px; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>InvenTree Parts + Parameters CSV Generator</h1>
+        
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
+        <input type="file" id="idMapInput" accept=".csv" />
+        <p style="font-size: 12px; color: #555;">
+        Optional: Upload IPN → PartID + ParamID map (from import page) to generate parameter CSV keyed by parameter IDs.
+        </p>
+        
+        <div style="margin: 20px 0;">
+            <button onclick="loadAndProcessFile()" id="processBtn" disabled>🚀 Generate Parts + Parameters CSVs</button>
+            <button onclick="generateParametersByParamId()" id="paramsByParamIdBtn" disabled>
+            🚀 Generate Parameters CSV (by Parameter ID)
+            </button>
+            <button onclick="clearDebug()" style="background: #6c757d;">Clear Debug</button>
+        </div>
+        
+        <div id="debug"></div>
+        <div id="preview"></div>
+        
+        <div id="downloadPartsSection" style="display: none; margin-top: 20px;">
+            <button id="downloadPartsBtn" onclick="triggerPartsDownload()" 
+                    style="background: #007cba; font-size: 16px; padding: 12px 30px;">
+                📥 DOWNLOAD PARTS CSV
+            </button>
+        </div>
+        <div id="downloadParamsSection" style="display: none; margin-top: 10px;">
+            <button id="downloadParamsBtn" onclick="triggerParamsDownload()" 
+                    style="background: #28a745; font-size: 16px; padding: 12px 30px;">
+                📥 DOWNLOAD PARAMETERS CSV
+            </button>
+        </div>
+        
+        <div id="status"></div>
+    </div>
+
+    <script>
+        // Category mapping from 3rd character of Style
+        const categoryMap = {'B': 8, 'R': 6, 'E': 4, 'S': 9, 'N': 7, 'P': 5};
+
+        // Global variables for blobs
+        let partsBlob = null;
+        let partsUrl = null;
+        let paramsBlob = null;
+        let paramsUrl = null;
+        let sourceHeaders = null;
+        let sourceRows = null;
+        let ipnTemplateToIds = null; // { `${IPN}:${Template}`: { partId, paramId } }
+
+        function updateMapperButtons() {
+            const btn = document.getElementById('paramsByParamIdBtn');
+            btn.disabled = !(sourceRows && ipnTemplateToIds);
+        }
+
+        document.getElementById('fileInput').addEventListener('change', function() {
+            document.getElementById('processBtn').disabled = !this.files[0];
+        });
+
+        function debugLog(message) {
+            const debugEl = document.getElementById('debug');
+            debugEl.innerHTML += `[${new Date().toLocaleTimeString()}] ${message}<br>`;
+            debugEl.scrollTop = debugEl.scrollHeight;
+            console.log(message);
+        }
+
+        function showStatus(message, type = 'status') {
+            const statusEl = document.getElementById('status');
+            statusEl.innerHTML = `<div class="${type}">${message}</div>`;
+        }
+
+        function clearDebug() {
+            document.getElementById('debug').innerHTML = '';
+        }
+
+        async function loadAndProcessFile() {
+            const file = document.getElementById('fileInput').files[0];
+            if (!file) {
+                showStatus('Please select a file', 'error');
+                return;
+            }
+
+            debugLog('🔄 Starting file processing...');
+            showStatus('Processing file...');
+            document.getElementById('processBtn').disabled = true;
+
+            try {
+                const data = await file.arrayBuffer();
+                const workbook = XLSX.read(data, { type: 'array' });
+                
+                debugLog(`📁 Loaded workbook with ${workbook.SheetNames.length} sheets: ${workbook.SheetNames.join(', ')}`);
+
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                
+                debugLog(`📄 Processing sheet: "${sheetName}"`);
+
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { 
+                    header: 1, 
+                    defval: '', 
+                    blankrows: true, 
+                    raw: false 
+                });
+
+                debugLog(`📊 Raw data rows: ${jsonData.length}`);
+                
+                if (jsonData.length === 0) {
+                    throw new Error('No data found in sheet');
+                }
+
+                const headers = jsonData[0];
+                debugLog(`📋 Headers found: ${JSON.stringify(headers)}`);
+
+                const dataRows = jsonData.slice(1);
+                debugLog(`📈 Data rows to process: ${dataRows.length}`);
+
+                sourceHeaders = headers;
+                sourceRows = dataRows;
+                updateMapperButtons();
+
+                // Transform data into parts and parameters
+                const partsRows = [];
+                const paramsRows = [];
+                
+                for (let i = 0; i < dataRows.length; i++) {
+                    const row = dataRows[i];
+                    const transformed = transformRow(headers, row, i + 1);
+                    if (transformed) {
+                        partsRows.push(transformed.part);
+                        paramsRows.push(...transformed.params);
+                    }
+                }
+
+                debugLog(`✅ Generated ${partsRows.length} PARTS rows and ${paramsRows.length} PARAMETER rows`);
+
+                // Generate both CSVs
+                const partsCSV = generatePartsCSV(partsRows);
+                const paramsCSV = generateParamsCSV(paramsRows);
+
+                // Store blobs for download
+                partsBlob = new Blob([partsCSV], { type: 'text/csv;charset=utf-8;' });
+                partsUrl = URL.createObjectURL(partsBlob);
+                paramsBlob = new Blob([paramsCSV], { type: 'text/csv;charset=utf-8;' });
+                paramsUrl = URL.createObjectURL(paramsBlob);
+
+                document.getElementById('downloadPartsSection').style.display = 'block';
+                document.getElementById('downloadParamsSection').style.display = 'block';
+
+                showPreview(partsRows, paramsRows);
+                showStatus(`✅ SUCCESS! Generated ${partsRows.length} PARTS + ${paramsRows.length} PARAMETER rows. Download both files!`, 'success');
+                debugLog('🎉 CSV generation complete!');
+
+            } catch (error) {
+                debugLog(`❌ ERROR: ${error.message}`);
+                showStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('processBtn').disabled = false;
+            }
+            document.getElementById('idMapInput').addEventListener('change', function () {
+                const file = this.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = e => {
+                    const text = e.target.result;
+                    const lines = text.trim().split(/\r?\n/);
+                    const map = {};
+
+                    // Expect: IPN,PartID,Template,ParamID
+                    for (let i = 1; i < lines.length; i++) {
+                    if (!lines[i].trim()) continue;
+                    const [ipn, partId, template, paramId] = lines[i].split(',');
+                    if (!ipn || !template || !paramId) continue;
+                    const key = `${ipn.trim()}:${template.trim()}`;
+                    map[key] = {
+                        partId: (partId || '').trim(),
+                        paramId: paramId.trim()
+                    };
+                    }
+
+                    ipnTemplateToIds = map;
+                    debugLog(`Loaded ID map for ${Object.keys(ipnTemplateToIds).length} IPN/Template rows`);
+                    updateMapperButtons();
+                };
+                reader.readAsText(file);
+            });
+        }
+
+        function transformRow(headers, row, rowNum) {
+            const rowObj = {};
+            
+            // Map headers to row data
+            for (let i = 0; i < headers.length && i < row.length; i++) {
+                const header = headers[i]?.toString().trim();
+                const value = row[i]?.toString().trim() || '';
+                if (header) {
+                    rowObj[header] = value;
+                }
+            }
+
+            debugLog(`Row ${rowNum}: Style="${rowObj.Style || 'MISSING'}"`);
+
+            // Skip if no Style
+            if (!rowObj.Style) {
+                debugLog(`  → Skipping (no Style column)`);
+                return null;
+            }
+
+            // **CORRECT SOURCE DATA MAPPING - EXACTLY like your original mapper**
+            let name = rowObj.Desc || rowObj['Desc'] || rowObj.Description || rowObj.description || '';
+            let description = name;  // Name and Description are identical per your original logic
+
+            // Category FIRST - Style[2] mapping (NEVER overridden)
+            let category = categoryMap[rowObj.Style[2]?.toUpperCase()] || '';
+
+            // **ONLY check Category column as FINAL fallback**
+            if (rowObj.Category && rowObj.Category.toString().match(/^\d+$/)) {
+                category = rowObj.Category;
+                debugLog(`  → Category column override: ${category}`);
+            }
+
+            const partData = {
+                ipn: rowObj.Style,
+                Category: category,
+                Name: `${rowObj.Style} - ${rowObj.Name}`,
+                Description: description
+            };
+
+            debugLog(`  → MAPPED: IPN=${partData.IPN}, Cat=${partData.Category}, Name/Desc="${name}"`);
+
+
+            // **ONLY override Category if EXPLICIT Category column exists AND Style[2] failed**
+            if (rowObj.Category && !partData.Category) {
+                partData.Category = parseInt(rowObj.Category);
+                debugLog(`  → Category column override: ${partData.Category}`);
+            }
+
+
+
+            // Base parameters (1-7) - ALWAYS included
+            const params = {
+                1: '',   // Stone Type
+                2: 'FALSE',  // Natural?
+                3: '',   // Metal Base
+                4: '',   // Metal Purity
+                5: '',   // Metal Color
+                6: '',   // Metal Finish
+                7: ''    // Metal Notes
+            };
+
+            // Fill base parameters from source data
+            if (rowObj.Gms || rowObj['Gms']) params[10] = rowObj.Gms || rowObj['Gms'];  // Weight (handled later)
+            if (rowObj.CTW || rowObj['CTW']) params[11] = rowObj.CTW || rowObj['CTW'];  // Carat (handled later)
+            if (rowObj.Type === 'DIAM' || rowObj['Type'] === 'DIAM') params[1] = 'Diamond';
+
+            // Metal parsing
+            const metalVal = rowObj.Metal || rowObj['Metal'] || '';
+            if (metalVal) {
+                const metal = metalVal.toUpperCase();
+                let metalBase = metal.replace(/\/?(YP|RP)$/i, '').trim();
+                params[3] = metalBase;
+
+                if (metal.indexOf('YP') >= 0) {
+                    params[5] = 'Yellow';
+                    params[6] = 'Plated';
+                } else if (metal.indexOf('RP') >= 0) {
+                    params[5] = 'Rose';
+                    params[6] = 'Plated';
+                }
+
+                if (metalBase.indexOf('SILVER') >= 0) {
+                    params[4] = '925';
+                } else if (metalBase.indexOf('PLATINUM') >= 0) {
+                    params[4] = '950';
+                }
+            }
+
+            // **CONDITIONAL PARAMETERS - ONLY CREATE ROWS FOR RELEVANT CATEGORIES**
+            const paramData = [];
+
+            // ALWAYS create base parameters 1-7
+            for (let id = 1; id <= 7; id++) {
+                paramData.push({
+                    ipn: partData.ipn,
+                    Template: id,
+                    Data: params[id] || ''
+                });
+            }
+
+            // Weight (10) and Carat (11) - ALWAYS if data exists, otherwise skip
+            if (params[10]) {
+                paramData.push({
+                    IPN: partData.IPN,
+                    Template: 10,
+                    Data: params[10]
+                });
+            }
+            if (params[11]) {
+                paramData.push({
+                    IPN: partData.IPN,
+                    Template: 11,
+                    Data: params[11]
+                });
+            }
+
+            // **CONDITIONAL: Ring Size (8) ONLY for Category 6**
+            if (partData.Category === 6) {
+                paramData.push({
+                    IPN: partData.IPN,
+                    Template: 8,
+                    Data: ''
+                });
+                debugLog(`  → Added Ring Size (Cat 6)`);
+            }
+
+            // **CONDITIONAL: Length (9) ONLY for Categories 7 or 8**
+            if (partData.Category === 7 || partData.Category === 8) {
+                paramData.push({
+                    IPN: partData.IPN,
+                    Template: 9,
+                    Data: ''
+                });
+                debugLog(`  → Added Length (Cat ${partData.Category})`);
+            }
+
+            debugLog(`  → PART: ${partData.IPN} (Cat ${partData.Category}) + ${paramData.length} params`);
+            return { part: partData, params: paramData };
+        }
+        function generateParametersByParamId() {
+            if (!sourceRows || !ipnTemplateToIds) {
+                alert('Need original source data and IPN→PartID+ParamID map.');
+                return;
+            }
+
+            const paramsOut = []; // { ParamID, PartID, Template, Data }
+
+            for (let i = 0; i < sourceRows.length; i++) {
+                const row = sourceRows[i];
+                const transformed = transformRow(sourceHeaders, row, i + 1);
+                if (!transformed) continue;
+
+                const ipn = transformed.part.IPN;
+                transformed.params.forEach(p => {
+                const templateId = p.Template;
+                const value = p.Data || '';
+
+                const key = `${ipn}:${templateId}`;
+                const ids = ipnTemplateToIds[key];
+                if (!ids) {
+                    debugLog(`No ParamID for IPN=${ipn}, Template=${templateId} – skipping`);
+                    return;
+                }
+
+                paramsOut.push({
+                    ParamID: ids.paramId,
+                    PartID: ids.partId,
+                    Template: templateId,
+                    Data: value
+                });
+                });
+            }
+
+            let csv = 'ParamID,PartID,Template,Data\n';
+            paramsOut.forEach(r => {
+                const vals = [r.ParamID, r.PartID, r.Template, r.Data || ''].map(v => {
+                const s = String(v);
+                return (s.includes(',') || s.includes('"') || s.includes('\n'))
+                    ? '"' + s.replace(/"/g, '""') + '"'
+                    : s;
+                });
+                csv += vals.join(',') + '\n';
+            });
+
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'inventree_parameters_by_paramid.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+
+            debugLog(`💾 Downloaded ${paramsOut.length} parameter rows keyed by ParamID`);
+        }
+
+        function generatePartsCSV(partsRows) {
+            const headers = ['ipn', 'Name', 'Description', 'Category'];
+            let csv = headers.join(',') + '\n';
+            
+            partsRows.forEach(row => {
+                // Simple escaping - only quote if actually needed
+                const values = [
+                    row.ipn || '',
+                    row.Name || '',
+                    row.Description || '',
+                    row.Category || ''
+                ].map(val => {
+                    const str = String(val);
+                    // Only quote if contains comma, quote, or newline
+                    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+                        return '"' + str.replace(/"/g, '""') + '"';
+                    }
+                    return str;
+                });
+                csv += values.join(',') + '\n';
+            });
+            return csv;
+        }
+
+        function generateParamsCSV(paramsRows) {
+            const headers = ['ipn', 'Template', 'Data'];
+            let csv = headers.join(',') + '\n';
+            paramsRows.forEach(row => {
+                const values = headers.map(h => `"${row[h] || ''}"`);
+                csv += values.join(',') + '\n';
+            });
+            return csv;
+        }
+
+        function showPreview(partsRows, paramsRows) {
+            const previewEl = document.getElementById('preview');
+            let previewHtml = '<h3>✅ PARTS CSV Preview (first 3 rows):</h3><pre>';
+            
+            partsRows.slice(0, 3).forEach((row, i) => {
+                previewHtml += `Row ${i+1}: ${Object.values(row).map(v => `"${v}"`).join(',')}\n`;
+            });
+            
+            previewHtml += '\n<h3>✅ PARAMETERS CSV Preview (first 10 rows):</h3><pre>';
+            previewHtml += '"IPN","Template","Data"\n';
+            paramsRows.slice(0, 10).forEach((row, i) => {
+                previewHtml += `"${row.IPN}","${row.Template}","${row.Data}"\n`;
+            });
+            
+            if (paramsRows.length > 10) {
+                previewHtml += `\n... and ${paramsRows.length - 10} more parameter rows\n`;
+            }
+            previewHtml += '</pre>';
+            
+            previewEl.innerHTML = previewHtml;
+        }
+
+        function triggerPartsDownload() {
+            if (!partsBlob) {
+                alert('Generate CSVs first!');
+                return;
+            }
+            const link = document.createElement('a');
+            link.href = partsUrl;
+            link.download = 'inventree_parts.csv';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            debugLog('💾 Parts CSV downloaded!');
+        }
+
+        function triggerParamsDownload() {
+            if (!paramsBlob) {
+                alert('Generate CSVs first!');
+                return;
+            }
+            const link = document.createElement('a');
+            link.href = paramsUrl;
+            link.download = 'inventree_parameters.csv';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            debugLog('💾 Parameters CSV downloaded!');
+        }
+    </script>
+</body>
+</html>

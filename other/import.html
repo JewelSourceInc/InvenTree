@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>InvenTree CSV Direct Import - Parts + Parameters</title>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    label { display: block; margin: 8px 0 4px; }
+    input, button { margin-bottom: 8px; }
+    table, th, td { border: 1px solid #ccc; border-collapse: collapse; padding: 3px 6px; font-size: 12px; }
+    th { background: #f3f3f3; }
+    .section { margin-top: 20px; border: 1px solid #ddd; padding: 15px; border-radius: 8px; }
+    .section h2 { color: #007cba; margin-top: 0; }
+    textarea { width: 100%; height: 120px; font-size: 11px; }
+    .parts-section { background: #e8f4f8; }
+    .params-section { background: #f0f8f0; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    .status { padding: 8px; margin: 5px 0; border-radius: 4px; font-size: 12px; }
+    .success { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+  </style>
+</head>
+<body>
+  <h1>InvenTree CSV Direct Import (Parts + Parameters)</h1>
+
+  <!-- InvenTree Server -->
+  <div class="section">
+    <h2>🌐 InvenTree Server</h2>
+    <label>InvenTree Base URL (no trailing slash)</label>
+    <input id="base-url" type="text" placeholder="https://inventree.jsistock.com" size="40" value="https://inventree.jsistock.com" />
+  </div>
+
+  <!-- PARTS SECTION -->
+  <div class="section parts-section">
+    <h2>📦 PARTS IMPORT</h2>
+    <label>Upload Parts CSV (IPN,Name,Description,Category)</label>
+    <input id="parts-file-input" type="file" accept=".csv, .xlsx" />
+    <button id="parts-load-btn" disabled>Load Parts File</button>
+    <button id="parts-import-btn" disabled style="background: #007cba;">🚀 Import Parts</button>
+    <button id="fetch-params-btn" disabled style="background: #17a2b8; margin-left: 5px;">
+  🔍 Fetch Parameter IDs
+    </button>
+    <button id="export-param-map-btn" disabled style="background: #6c757d; margin-left: 5px;">
+      📥 Download IPN → Part + Param IDs
+    </button>
+    <div style="margin-top: 10px;">
+      <label>Part IDs to fetch (optional: single `7`, list `1,3,6`, or range `170-180`)</label>
+      <input id="part-id-input" type="text" placeholder="Leave empty for newly created parts" style="width: 100%;" />
+    </div>
+    
+    <div style="margin-top: 10px;">
+      <h4>Parts Preview (first 10 rows)</h4>
+      <table id="parts-preview-table"></table>
+    </div>
+    
+    <div id="parts-status"></div>
+    <p>Parts Log:</p>
+    <textarea id="parts-log" readonly></textarea>
+  </div>
+
+  <!-- PARAMETERS SECTION -->
+  <div class="section params-section">
+    <h2>⚙️ PARAMETERS IMPORT</h2>
+    <label>Upload Parameters CSV (IPN,Template,Data)</label>
+    <input id="params-file-input" type="file" accept=".csv, .xlsx" />
+    <button id="params-load-btn" disabled>Load Parameters File</button>
+    <button id="params-import-btn" disabled style="background: #28a745;">🚀 Import Parameters</button>
+    
+    <div style="margin-top: 10px;">
+      <h4>Parameters Preview (first 10 rows)</h4>
+      <table id="params-preview-table"></table>
+    </div>
+    
+    <div id="params-status"></div>
+    <p>Parameters Log:</p>
+    <textarea id="params-log" readonly></textarea>
+  </div>
+
+  <script>
+    // GLOBAL STATE
+    let partsRows = [];
+    let paramsRows = [];
+    let ipnToPartId = {}; // Cache: IPN → part_id mapping
+
+    // DOM Elements
+    const baseUrlInput = document.getElementById('base-url');
+    const partsFileInput = document.getElementById('parts-file-input');
+    const partsLoadBtn = document.getElementById('parts-load-btn');
+    const partsImportBtn = document.getElementById('parts-import-btn');
+    const partsPreviewTable = document.getElementById('parts-preview-table');
+    const partsLog = document.getElementById('parts-log');
+    const partsStatus = document.getElementById('parts-status');
+
+    const paramsFileInput = document.getElementById('params-file-input');
+    const paramsLoadBtn = document.getElementById('params-load-btn');
+    const paramsImportBtn = document.getElementById('params-import-btn');
+    const paramsPreviewTable = document.getElementById('params-preview-table');
+    const paramsLog = document.getElementById('params-log');
+    const paramsStatus = document.getElementById('params-status');
+    const exportParamMapBtn = document.getElementById('export-param-map-btn');
+    const fetchParamsBtn = document.getElementById('fetch-params-btn');
+    const partIdInput = document.getElementById('part-id-input');
+    let ipnTemplateToParamId = {}; // { `${IPN}:${template}`: { part: partId, paramId } }
+    let lastAuth = null;
+    let lastBaseUrl = null;
+    // Initialize fetch button state
+    updateFetchButtonState();
+
+
+    // LOG FUNCTIONS
+    function partsLogMsg(msg) {
+      partsLog.value += `[PARTS] ${new Date().toLocaleTimeString()} ${msg}\n`;
+      partsLog.scrollTop = partsLog.scrollHeight;
+      console.log('[PARTS]', msg);
+    }
+
+    function paramsLogMsg(msg) {
+      paramsLog.value += `[PARAMS] ${new Date().toLocaleTimeString()} ${msg}\n`;
+      paramsLog.scrollTop = paramsLog.scrollHeight;
+      console.log('[PARAMS]', msg);
+    }
+
+    function showPartsStatus(msg, type = 'status') {
+      partsStatus.innerHTML = `<div class="status ${type}">${msg}</div>`;
+    }
+
+    function showParamsStatus(msg, type = 'status') {
+      paramsStatus.innerHTML = `<div class="status ${type}">${msg}</div>`;
+    }
+
+    // PARTS SECTION EVENT LISTENERS
+    partsFileInput.addEventListener('change', () => {
+      partsLoadBtn.disabled = !partsFileInput.files[0];
+      partsImportBtn.disabled = true;
+    });
+
+    partsLoadBtn.addEventListener('click', () => loadFile(partsFileInput, parsePartsFile, 'parts'));
+    partsImportBtn.addEventListener('click', () => importParts());
+
+    // PARAMETERS SECTION EVENT LISTENERS
+    paramsFileInput.addEventListener('change', () => {
+      paramsLoadBtn.disabled = !paramsFileInput.files[0];
+      paramsImportBtn.disabled = true;
+    });
+
+    paramsLoadBtn.addEventListener('click', () => loadFile(paramsFileInput, parseParamsFile, 'params'));
+    paramsImportBtn.addEventListener('click', () => importParameters());
+    
+    partIdInput.addEventListener('input', updateFetchButtonState);
+    fetchParamsBtn.addEventListener('click', () => fetchParameters());
+
+    // New function to check both conditions
+    function updateFetchButtonState() {
+      const hasPartIds = partIdInput.value.trim();
+      const hasCreatedParts = Object.keys(ipnToPartId).length > 0;
+      fetchParamsBtn.disabled = !(hasPartIds || hasCreatedParts);
+    }
+
+    fetchParamsBtn.addEventListener('click', () => fetchParameters());
+    exportParamMapBtn.addEventListener('click', () => {
+      if (!ipnTemplateToParamId || Object.keys(ipnTemplateToParamId).length === 0) {
+        alert('Fetch parameters first!');
+        return;
+      }
+      // Your existing download logic here
+    });
+
+    // FILE LOADING
+    async function loadFile(fileInput, parser, type) {
+      const file = fileInput.files[0];
+      if (!file) return alert('Please select a file first.');
+
+      const name = file.name.toLowerCase();
+      if (name.endsWith('.csv')) {
+        parser(file);
+      } else if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
+        parseXlsx(file, parser);
+      } else {
+        alert('Unsupported file type: use CSV or Excel (.xlsx).');
+      }
+    }
+
+    function parsePartsFile(file) {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          partsRows = results.data.filter(r => r.ipn);
+          partsLogMsg(`Parsed ${partsRows.length} parts rows`);
+          renderPartsPreview();
+          partsImportBtn.disabled = false;
+          showPartsStatus(`Ready to import ${partsRows.length} parts`, 'success');
+        }
+      });
+    }
+
+    function parseParamsFile(file) {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          paramsRows = results.data.filter(r => r.ParamID);
+          paramsLogMsg(`Parsed ${paramsRows.length} parameter rows (by ParamID)`);
+          renderParamsPreview();
+          paramsImportBtn.disabled = false;
+          showParamsStatus(`Ready to import ${paramsRows.length} parameters`, 'success');
+        }
+      });
+    }
+
+    function parseXlsx(file, parser) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, {type: 'array'});
+        const firstSheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[firstSheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, {defval: ''});
+        parser({data: rows});
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    // PREVIEWS
+    function renderPartsPreview() {
+      partsPreviewTable.innerHTML = '';
+      if (!partsRows.length) return;
+
+      const headers = ['ipn', 'Name', 'Description', 'Category'];
+      const thead = document.createElement('tr');
+      headers.forEach(h => {
+        const th = document.createElement('th');
+        th.textContent = h;
+        thead.appendChild(th);
+      });
+      partsPreviewTable.appendChild(thead);
+
+      partsRows.slice(0, 10).forEach(r => {
+        const tr = document.createElement('tr');
+        headers.forEach(h => {
+          const td = document.createElement('td');
+          td.textContent = r[h] || '';
+          tr.appendChild(td);
+        });
+        partsPreviewTable.appendChild(tr);
+      });
+    }
+
+    function renderParamsPreview() {
+      paramsPreviewTable.innerHTML = '';
+      if (!paramsRows.length) return;
+
+      const headers = ['ParamID', 'Data'];
+      const thead = document.createElement('tr');
+      headers.forEach(h => {
+        const th = document.createElement('th');
+        th.textContent = h;
+        thead.appendChild(th);
+      });
+      paramsPreviewTable.appendChild(thead);
+
+      paramsRows.slice(0, 10).forEach(r => {
+        const tr = document.createElement('tr');
+        headers.forEach(h => {
+          const td = document.createElement('td');
+          td.textContent = r[h] || '';
+          tr.appendChild(td);
+        });
+        paramsPreviewTable.appendChild(tr);
+      });
+    }
+
+    // PARTS IMPORT
+    async function importParts() {
+      if (!partsRows.length) {
+        alert('Load parts file first.');
+        return;
+      }
+
+      const baseUrl = baseUrlInput.value.trim();
+      const username = prompt('Enter your InvenTree username:');
+      const password = prompt('Enter your InvenTree password:');
+      
+      if (!baseUrl || !username || !password) {
+        alert('Fill all fields.');
+        return;
+      }
+
+      const partsUrl = baseUrl.replace(/\/+$/, '') + '/api/part/';
+      const auth = btoa(username + ':' + password);
+      partsImportBtn.disabled = true;
+      showPartsStatus('Creating parts only...', 'status');
+      partsLogMsg('🚀 PHASE 1: Creating parts (parameters later)');
+
+      for (let i = 0; i < partsRows.length; i++) {
+        const row = partsRows[i];
+        const partData = {
+          name: row.Name || 'Part',
+          ipn: row.ipn || 'MISSING',     // ✅ IPN column populated
+          category: parseInt(row.Category) || 10,  // Category ID
+          description: row.Description || ''
+        };
+
+        partsLogMsg(`Creating: ${partData.name} (Cat ${partData.category})`);
+
+        partsLogMsg(`DEBUG CSV: ipn="${row.ipn || 'MISSING'}" | partData.ipn="${partData.ipn || 'MISSING'}"`);
+
+        try {
+          const res = await fetch(partsUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Basic ' + auth,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(partData)
+          });
+
+          if (!res.ok) {
+            const text = await res.text();
+            partsLogMsg(`❌ Row ${i+1} ${row.ipn}: ${res.status}`);
+          } else {
+            const data = await res.json();
+            const partId = data.pk;
+            ipnToPartId[row.ipn] = partId;
+            partsLogMsg(`✅ Row ${i+1} ${row.ipn}: ID ${partId}`);
+          }
+        } catch (err) {
+          partsLogMsg(`❌ Row ${i+1} ${row.ipn}: ${err.message}`);
+        }
+        await new Promise(r => setTimeout(r, 100));
+      }
+
+      partsImportBtn.disabled = false;
+      showPartsStatus(`✅ ${Object.keys(ipnToPartId).length} parts created! Ready to fetch parameters.`, 'success');
+      fetchParamsBtn.disabled = false; // Enable main button when parts exist
+      partsLogMsg(`🔍 "Fetch Parameter IDs" button now enabled`);
+      partsLogMsg(`=== PARTS CREATION COMPLETE ===`);
+      partsLogMsg(`📋 Next: Click "Fetch Parameter IDs" button`);
+
+    }
+
+    async function fetchParameters() {
+      // NO MORE PROMPTS - reuse parts auth
+      if (!lastAuth || lastBaseUrl !== baseUrlInput.value.trim()) {
+        const username = prompt('Enter username:');
+        const password = prompt('Enter password:');
+        if (!username || !password) return;
+        lastAuth = btoa(username + ':' + password);
+        lastBaseUrl = baseUrlInput.value.trim();
+      }
+      const auth = lastAuth;
+
+      fetchParamsBtn.disabled = true;
+      showPartsStatus('🔍 Testing API access...', 'status');
+      partsLogMsg('🚀 Starting parameter fetch debug');
+
+      // 1. TEST AUTH FIRST - critical step missing
+      const testUrl = `${baseUrl.replace(/\/+$/, '')}/api/part/parameter/`;
+      try {
+        const testRes = await fetch(testUrl, {
+          headers: { 'Authorization': 'Basic ' + auth }
+        });
+        partsLogMsg(`AUTH TEST: ${testRes.status} ${testRes.statusText}`);
+        if (!testRes.ok) {
+          showPartsStatus(`❌ Auth failed: ${testRes.status}`, 'error');
+          fetchParamsBtn.disabled = false;
+          return;
+        }
+      } catch (err) {
+        partsLogMsg(`❌ Auth error: ${err.message}`);
+        return;
+      }
+
+      // 2. Get part IDs to process
+      const input = partIdInput.value.trim();
+      let partEntries = [];
+      
+      if (input) {
+        // Parse explicit IDs (7, 1,3,6, 170-180)
+        const ids = new Set();
+        input.split(',').map(s => s.trim()).forEach(token => {
+          if (token.includes('-')) {
+            const [start, end] = token.split('-').map(t => parseInt(t.trim()));
+            if (!isNaN(start) && !isNaN(end)) {
+              for (let v = start; v <= end; v++) ids.add(v);
+            }
+          } else {
+            const v = parseInt(token);
+            if (!isNaN(v)) ids.add(v);
+          }
+        });
+        partEntries = Array.from(ids).map(id => [`PART_${id}`, id]);
+      } else if (Object.keys(ipnToPartId).length) {
+        partEntries = Object.entries(ipnToPartId);
+      } else {
+        alert('No parts created or part IDs specified');
+        fetchParamsBtn.disabled = false;
+        return;
+      }
+
+      partsLogMsg(`📋 Processing ${partEntries.length} parts`);
+
+      // 3. Fetch parameters for each part
+      ipnTemplateToParamId = {};
+      for (let i = 0; i < partEntries.length; i++) {
+        const [ipnKey, partId] = partEntries[i];
+        const paramsUrl = `${baseUrl}/api/part/${partId}/parameters`;
+        
+        partsLogMsg(`🔍 [${i+1}/${partEntries.length}] ${ipnKey} (ID: ${partId}) → ${paramsUrl}`);
+        
+        if (!res.ok) {
+          let errorText = 'Unknown error';
+          try {
+            errorText = await res.text();
+            errorText = errorText.slice(0, 100);  // Only slice STRING
+          } catch(e) {
+            errorText = res.statusText;
+          }
+          partsLogMsg(`   ❌ Failed: ${res.status} ${errorText}`);
+          continue;
+        }
+        
+        const data = await res.json();
+        const results = Array.isArray(data) ? data : (data.results || []);  // ← FIXED
+        partsLogMsg(`✅ ${ipnKey} → ${results.length} params`);
+
+        results.forEach(p => {
+          const key = `${ipnLabel}:${p.template}`;
+          ipnTemplateToParamId[key] = { part: p.part, paramId: p.pk };
+        });
+      }
+
+      // 4. Generate download
+      const mapCount = Object.keys(ipnTemplateToParamId).length;
+      partsLogMsg(`💾 Generated mapping: ${mapCount} IPN+Template → ParamID pairs`);
+      
+      let csv = 'ipn,PartID,Template,ParamID\n';
+      for (const [key, val] of Object.entries(ipnTemplateToParamId)) {
+        const [IPN, template] = key.split(':');
+        csv += `${IPN},${val.part},${template},${val.paramId}\n`;
+      }
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `param_map_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+
+      fetchParamsBtn.disabled = false;
+      showPartsStatus(`✅ Fetched ${mapCount} parameter mappings`, 'success');
+    }
+
+    // PARAMETERS IMPORT
+    async function importParameters() {
+      const paramsUrl = baseUrl.replace(/\/+$/, '') + '/api/part/parameter/';
+      const auth = btoa(username + ':' + password);
+
+      paramsImportBtn.disabled = true;
+      showParamsStatus(`Importing ${paramsRows.length} parameters...`, 'status');
+      paramsLogMsg(`🚀 Starting ${paramsRows.length} parameter updates`);
+
+      let successCount = 0;
+      let skipCount = 0;
+
+      for (let i = 0; i < paramsRows.length; i++) {
+        const row = paramsRows[i];
+        const paramId = row.ParamID || row.paramid || row.param_id;
+        const dataValue = row.Data || row.data || '';
+
+        if (!paramId) {
+          paramsLogMsg(`[${i+1}/${paramsRows.length}] ❌ Missing ParamID`);
+          skipCount++;
+          continue;
+        }
+
+        if (i % 5 === 0) {
+          const progress = Math.round((i / paramsRows.length) * 100);
+          showParamsStatus(`Processing ${i}/${paramsRows.length} (${progress}%)`, 'status');
+        }
+
+        try {
+          const updateRes = await fetch(`${paramsUrl}${paramId}/`, {
+            method: 'PATCH',
+            headers: {
+              'Authorization': 'Basic ' + auth,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ data: dataValue })
+          });
+
+          if (updateRes.ok) {
+            successCount++;
+            paramsLogMsg(`[${i+1}/${paramsRows.length}] ✅ Param ${paramId}=${dataValue || '""'}`);
+          } else {
+            const errText = await updateRes.text();
+            paramsLogMsg(
+              `[${i+1}/${paramsRows.length}] ❌ Param ${paramId}: ${updateRes.status} ${errText.slice(0,80)}`
+            );
+            skipCount++;
+          }
+        } catch (err) {
+          paramsLogMsg(
+            `[${i+1}/${paramsRows.length}] ❌ Param ${paramId}: ${err.message}`
+          );
+          skipCount++;
+        }
+
+        await new Promise(r => setTimeout(r, 20));
+      }
+
+      paramsImportBtn.disabled = false;
+      showParamsStatus(`Complete! ✅${successCount} | ⚠️${skipCount} | ${paramsRows.length} total`, 'success');
+      paramsLogMsg(`✅ FINISHED: ${successCount} updated, ${skipCount} skipped`);
+    }
+
+  </script>
+</body>
+</html>
